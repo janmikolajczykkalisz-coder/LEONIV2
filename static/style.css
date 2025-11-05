@@ -1,0 +1,30 @@
+:root {
+  --leoni-blue: #003366;
+  --leoni-orange: #ff6600;
+  --leoni-gray: #f5f5f5;
+}
+
+body {
+  background-color: var(--leoni-gray);
+  font-family: 'Open Sans', Arial, sans-serif;
+}
+
+.navbar, .card-header {
+  background-color: var(--leoni-blue) !important;
+  color: white !important;
+}
+
+.btn-primary {
+  background-color: var(--leoni-blue);
+  border-color: var(--leoni-blue);
+}
+
+.btn-primary:hover {
+  background-color: var(--leoni-orange);
+  border-color: var(--leoni-orange);
+}
+
+h2, h5 {
+  color: var(--leoni-blue);
+  font-weight: 600;
+}
