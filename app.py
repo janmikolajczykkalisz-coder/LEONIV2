@@ -2,25 +2,30 @@ from flask import Flask, render_template, request, send_file, redirect
 from datetime import datetime
 import zoneinfo
 import sqlite3
-from database import export_to_excel
+import uuid
+import zipfile
 from flask import send_file
-
-from pdf_utils import generate_pdf_bytes
+from io import BytesIO
+from database import export_to_excel
+from pdf_utils import generate_pdf_bytes, generate_label_pdf
 from database import init_db, save_history
 from data import DIAMETERS_SET_1, DIAMETERS_SET_2, DIAMETERS_SET_3, DIAMETERS_BY_SET
 
 app = Flask(__name__)
 init_db()
 
-# ------------------- STRONA GŁÓWNA (GENERATOR) -------------------
+def generate_unique_satznummer():
+    return str(uuid.uuid4())[:8]
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        satznummer = request.form["satznummer"]
+        satznummer = request.form.get("satznummer")
         machine_number = request.form.get("machine_number", "")
         selected_set = request.form.get("diameter_set", "3")
+        stone_type = request.form.get("stone_type", "ND")
+        operator = request.form.get("operator", "")
 
-        # wybór zestawu średnic
         if selected_set == "1":
             diameters = DIAMETERS_SET_1
         elif selected_set == "2":
@@ -28,14 +33,15 @@ def index():
         else:
             diameters = DIAMETERS_SET_3
 
-        # kody z formularza
         codes = [request.form.get(f"code{i}", "") for i in range(len(diameters))]
 
-        # PDF
-        pdf_bytes = generate_pdf_bytes(codes, satznummer, diameters, machine_number)
+        set_names = {"1": "Untersatz", "2": "Mittelsatz", "3": "Grundsatz"}
+        set_name = set_names.get(selected_set, "")
 
-        # DB
-        init_db()
+        pdf_bytes = generate_pdf_bytes(
+            codes, satznummer, diameters, machine_number, stone_type, set_name, operator
+        )
+
         local_time = datetime.now(zoneinfo.ZoneInfo("Europe/Warsaw")).strftime("%Y-%m-%d %H:%M:%S")
         save_history(satznummer, machine_number, selected_set, local_time)
 
@@ -56,10 +62,9 @@ def index():
             mimetype="application/pdf"
         )
 
-    return render_template("index.html", diams=DIAMETERS_SET_3)
+    generated_satznummer = generate_unique_satznummer()
+    return render_template("index.html", diams=DIAMETERS_SET_3, generated_satznummer=generated_satznummer)
 
-
-# ------------------- HISTORIA -------------------
 ZESTAWY = {
     "1": "Untersatz",
     "2": "Mittelsatz",
@@ -79,7 +84,6 @@ def history():
     conn = sqlite3.connect("satzkarten.db")
     cursor = conn.cursor()
 
-    # --- historia ---
     query_h = "SELECT * FROM history WHERE 1=1"
     params_h = []
     if satznummer:
@@ -100,15 +104,20 @@ def history():
 
     query_h += " ORDER BY id DESC"
     cursor.execute(query_h, params_h)
-    history_rows = cursor.fetchall()
+    raw_history = cursor.fetchall()
 
-    # zamiana numerów zestawu na nazwy
     history_rows = [
-        (row[0], row[1], row[2], ZESTAWY.get(str(row[3]), row[3]), row[4])
-        for row in history_rows
+        {
+            "id": row[0],
+            "satznummer": row[1],
+            "machine": row[2],
+            "zestaw_num": str(row[3]),
+            "zestaw_name": ZESTAWY.get(str(row[3]), row[3]),
+            "data": row[4]
+        }
+        for row in raw_history
     ]
 
-    # --- szczegóły ---
     query_d = """
         SELECT d.satznummer, d.code, d.diameter, d.id, d.status
         FROM details d
@@ -156,8 +165,6 @@ def history():
         diameters_by_set=DIAMETERS_BY_SET
     )
 
-
-# ------------------- USUWANIE CAŁEJ KARTY -------------------
 @app.route("/delete/<satznummer>", methods=["POST"])
 def delete_card(satznummer):
     conn = sqlite3.connect("satzkarten.db")
@@ -168,8 +175,6 @@ def delete_card(satznummer):
     conn.close()
     return redirect("/history")
 
-
-# ------------------- USUWANIE POJEDYNCZEGO KAMIENIA -------------------
 @app.route("/delete_stone/<int:stone_id>", methods=["POST"])
 def delete_stone(stone_id):
     conn = sqlite3.connect("satzkarten.db")
@@ -179,8 +184,6 @@ def delete_stone(stone_id):
     conn.close()
     return redirect("/history")
 
-
-# ------------------- DODAWANIE NOWEGO KAMIENIA -------------------
 @app.route("/add_stone", methods=["POST"])
 def add_stone():
     satznummer = request.form.get("satznummer")
@@ -188,7 +191,6 @@ def add_stone():
     diameter = request.form.get("diameter")
     zestaw = request.form.get("zestaw")
 
-    # walidacja: czy średnica należy do wybranego zestawu
     if zestaw not in DIAMETERS_BY_SET or float(diameter) not in DIAMETERS_BY_SET[zestaw]:
         return redirect("/history")
 
@@ -202,8 +204,6 @@ def add_stone():
     conn.close()
     return redirect("/history")
 
-
-# ------------------- AKTUALIZACJA STATUSU KAMIENIA -------------------
 @app.route("/update_status/<int:stone_id>", methods=["POST"])
 def update_status(stone_id):
     new_status = request.form.get("status")
@@ -213,12 +213,68 @@ def update_status(stone_id):
     conn.commit()
     conn.close()
     return redirect("/history")
-#------------------------EXPORT DO EXCELA------------------------------------------
-@app.route("/export")
-def export():
-    filename = "export.xlsx"
-    export_to_excel(filename)
+
+
+@app.route("/export_card/<satznummer>")
+def export_card(satznummer):
+    filename = f"export_karta_{satznummer}.xlsx"
+    export_to_excel(filename, satznummer=satznummer)
     return send_file(filename, as_attachment=True)
+
+@app.route("/download_pdf/<satznummer>")
+def download_pdf(satznummer):
+    conn = sqlite3.connect("satzkarten.db")
+    cursor = conn.cursor()
+
+    # pobierz dane z history
+    cursor.execute("SELECT machine, zestaw, data FROM history WHERE satznummer = ?", (satznummer,))
+    history_row = cursor.fetchone()
+    if not history_row:
+        conn.close()
+        return "Nie znaleziono karty", 404
+
+    machine, zestaw, _ = history_row
+    zestaw = str(zestaw)
+
+    # pobierz dane z details
+    cursor.execute("SELECT code, diameter FROM details WHERE satznummer = ?", (satznummer,))
+    details = cursor.fetchall()
+    conn.close()
+
+    codes = [row[0] for row in details]
+    diameters = [row[1] for row in details]
+
+    set_names = {"1": "Untersatz", "2": "Mittelsatz", "3": "Grundsatz"}
+    set_name = set_names.get(zestaw, "")
+    pdf_bytes = generate_pdf_bytes(codes, satznummer, diameters, machine, stone_type="ND", set_name=set_name)
+
+    return send_file(
+        pdf_bytes,
+        as_attachment=True,
+        download_name=f"Satzkarte_{satznummer}.pdf",
+        mimetype="application/pdf"
+    )
+@app.route("/generate_label_direct", methods=["POST"])
+def generate_label_direct():
+    satznummer = request.form.get("satznummer")
+    selected_set = request.form.get("diameter_set", "3")
+
+    set_names = {"1": "Untersatz", "2": "Mittelsatz", "3": "Grundsatz"}
+    set_name = set_names.get(selected_set, "Zestaw")
+
+    # policz kamienie z formularza
+    stone_count = len([k for k in request.form.keys() if k.startswith("code")])
+
+    # użyj funkcji z pdf_utils.py
+    pdf_bytes = generate_label_pdf(set_name, stone_count, satznummer)
+
+    return send_file(
+        pdf_bytes,
+        as_attachment=True,
+        download_name=f"naklejka_{satznummer}.pdf",
+        mimetype="application/pdf"
+    )
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, ssl_context="adhoc", debug=True)
