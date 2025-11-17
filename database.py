@@ -72,27 +72,45 @@ def get_details(satznummer=None):
     conn.close()
     return rows
 
-def export_to_excel(filename="export.xlsx"):
-    conn = sqlite3.connect("satzkarten.db")
-    df = pd.read_sql_query("SELECT * FROM history_with_codes", conn)
+
+# --- Eksport tylko dla wybranego zestawu ---
+def export_to_excel(filename="export.xlsx", zestaw=None, satznummer=None):
+    conn = sqlite3.connect(DB_NAME)
+
+    query = """
+        SELECT h.satznummer, h.machine, h.zestaw,
+               d.code, d.diameter, d.status
+        FROM history h
+        JOIN details d ON h.satznummer = d.satznummer
+        WHERE 1=1
+    """
+    params = []
+
+    if zestaw:
+        query += " AND h.zestaw = ?"
+        params.append(zestaw)
+    if satznummer:
+        query += " AND h.satznummer = ?"
+        params.append(satznummer)
+
+    df = pd.read_sql_query(query, conn, params=params)
     conn.close()
 
-    # zapisz z formatowaniem
+    # transpozycja: kolumny stają się wierszami
+    df_transposed = df.T
+    df_transposed.reset_index(inplace=True)
+    df_transposed.columns.values[0] = "Pole"
+
     with pd.ExcelWriter(filename, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Zestawy")
+        df_transposed.to_excel(writer, index=False, sheet_name="Karta")
 
-        # pobierz arkusz Excela
-        worksheet = writer.sheets["Zestawy"]
-
-        # automatyczne dopasowanie szerokości kolumn
+        worksheet = writer.sheets["Karta"]
         for col in worksheet.columns:
             max_length = 0
             col_letter = col[0].column_letter
             for cell in col:
-                try:
-                    if cell.value:
-                        max_length = max(max_length, len(str(cell.value)))
-                except:
-                    pass
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
             worksheet.column_dimensions[col_letter].width = max_length + 2
-            worksheet.auto_filter.ref = worksheet.dimensions
+        worksheet.auto_filter.ref = worksheet.dimensions
+
