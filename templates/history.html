@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Historia kart</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+</head>
+<body class="bg-light">
+
+{% include 'navbar.html' %}
+
+<div class="container py-4">
+  <h2 class="text-center mb-4"> Historia zapisanych kart</h2>
+
+  <!-- Filtry -->
+  <div class="card mb-4 shadow-sm">
+    <div class="card-header bg-info text-white">Filtry</div>
+    <div class="card-body">
+      <form method="get" class="row g-3">
+        <!-- pola filtrów -->
+        <div class="col-md-3">
+          <label class="form-label">Satznummer</label>
+          <input type="text" name="satznummer" value="{{ filters.satznummer }}" class="form-control">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Maszyna</label>
+          <input type="text" name="machine" value="{{ filters.machine }}" class="form-control">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Zestaw</label>
+          <select name="zestaw" class="form-select">
+            <option value="">(wszystkie)</option>
+            <option value="1" {{ 'selected' if filters.zestaw == '1' else '' }}>Untersatz</option>
+            <option value="2" {{ 'selected' if filters.zestaw == '2' else '' }}>Mittelsatz</option>
+            <option value="3" {{ 'selected' if filters.zestaw == '3' else '' }}>Grundsatz</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Data od</label>
+          <input type="date" name="date_from" value="{{ filters.date_from }}" class="form-control">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Data do</label>
+          <input type="date" name="date_to" value="{{ filters.date_to }}" class="form-control">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Kod</label>
+          <input type="text" name="code" value="{{ filters.code }}" class="form-control">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Średnica (mm)</label>
+          <input type="text" name="diameter" value="{{ filters.diameter }}" class="form-control">
+        </div>
+        <div class="col-12">
+          <button type="submit" class="btn btn-primary">Filtruj</button>
+          <a href="/history" class="btn btn-outline-secondary">Wyczyść</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Tabela historii -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-primary text-white">Lista kart</div>
+    <div class="card-body p-0">
+      <table class="table table-hover table-striped table-bordered align-middle shadow-sm mb-0">
+        <thead class="table-primary">
+          <tr>
+            <th>ID</th>
+            <th>Satznummer</th>
+            <th>Maszyna</th>
+            <th>Zestaw</th>
+            <th>Data</th>
+            <th>Akcje</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in history %}
+          <tr>
+            <td>{{ row.id }}</td>
+            <td>{{ row.satznummer }}</td>
+            <td>{{ row.machine }}</td>
+            <td>{{ row.zestaw_name }}</td>
+            <td>{{ row.data }}</td>
+                      <td class="d-flex gap-2">
+          <a href="{{ url_for('export_card', satznummer=row.satznummer) }}" class="btn btn-sm btn-success">
+            <i class="bi bi-file-earmark-excel"></i> Eksportuj kartę
+          </a>
+
+          <a href="{{ url_for('download_pdf', satznummer=row.satznummer) }}" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-file-earmark-pdf"></i> Pobierz PDF
+          </a>
+          <form method="post" action="/delete/{{ row.satznummer }}"
+                onsubmit="return confirm('Na pewno usunąć tę kartę i jej kamienie?')">
+            <button type="submit" class="btn btn-sm btn-danger">
+              <i class="bi bi-trash"></i> Usuń
+            </button>
+          </form>
+        </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="text-center text-muted">Brak zapisanych kart</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Przycisk dodawania kamienia -->
+  <div class="text-end mb-3">
+    <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addStoneModal">
+      Dodaj kamień
+    </button>
+  </div>
+
+  <!-- Tabela szczegółów -->
+  <div class="card shadow-sm">
+    <div class="card-header bg-secondary text-white">Szczegóły kamieni ciągarniczych</div>
+    <div class="card-body p-0">
+      <table class="table table-hover table-striped table-bordered align-middle shadow-sm mb-0">
+        <thead class="table-secondary">
+          <tr>
+            <th>Satznummer</th>
+            <th>Kod</th>
+            <th>Średnica (mm)</th>
+            <th>Status</th>
+            <th>Akcje</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in details %}
+          <tr>
+            <td>{{ row[0] }}</td>
+            <td>{{ row[1] }}</td>
+            <td>
+              {% if row[2] is not none %}
+                {{ "%.4f"|format(row[2]) }}
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td>
+              <select class="form-select form-select-sm"
+                      onchange="updateStatus({{ row[3] }}, this.value)">
+                <option value="Nowy" {{ 'selected' if row[4] == 'Nowy' else '' }}>Nowy</option>
+                <option value="Do naprawy" {{ 'selected' if row[4] == 'Do naprawy' else '' }}>Do naprawy</option>
+                <option value="Do utylizacji" {{ 'selected' if row[4] == 'Do utylizacji' else '' }}>Do utylizacji</option>
+              </select>
+            </td>
+            <td>
+              <form method="post" action="/delete_stone/{{ row[3] }}"
+                    onsubmit="return confirm('Na pewno zutylizować ten kamień?')">
+                <button type="submit" class="btn btn-sm btn-danger">
+                  <i class="bi bi-trash"></i> Usuń
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-center text-muted">Brak szczegółów</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+    <!-- Modal dodawania kamienia -->
+    <div class="modal fade" id="addStoneModal" tabindex="-1" aria-labelledby="addStoneLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <form method="post" action="/add_stone">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title" id="addStoneLabel">Dodaj nowy kamień</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Zamknij"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-3">
+                <label class="form-label">Satznummer</label>
+                <input type="text" name="satznummer" class="form-control" required>
+
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Zestaw</label>
+                <select name="zestaw" id="zestawSelect" class="form-select" required>
+                  <option value="1">Untersatz</option>
+                  <option value="2">Mittelsatz</option>
+                  <option value="3">Grundsatz</option>
+
+                </select>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Średnica (mm)</label>
+                <select name="diameter" id="diameterSelect" class="form-select" required>
+                  <!-- opcje będą uzupełniane przez JS -->
+                </select>
+              </div>
+                           <div class="mb-3">
+                <label class="form-label">Kod</label>
+                <input type="text" name="code" class="form-control">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="submit" class="btn btn-primary">Dodaj</button>
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+    </div>
+
+    <div class="text-center mt-4">
+        <a href="/" class="btn btn-outline-primary">⬅️ Powrót</a>
+    </div>
+</div> <!-- /container -->
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- AJAX do zmiany statusu -->
+<script>
+function updateStatus(stoneId, newStatus) {
+  fetch(`/update_status/${stoneId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `status=${encodeURIComponent(newStatus)}`
+  });
+}
+</script>
+
+<!-- Skrypt do dynamicznego uzupełniania średnic -->
+<script>
+  const diametersBySet = {{ diameters_by_set|tojson }};
+  const zestawSelect = document.getElementById("zestawSelect");
+  const diameterSelect = document.getElementById("diameterSelect");
+
+  function updateDiameters() {
+    const zestaw = zestawSelect.value;
+    const options = diametersBySet[zestaw] || [];
+    diameterSelect.innerHTML = "";
+    options.forEach(d => {
+      const opt = document.createElement("option");
+      opt.value = d;
+      opt.textContent = d.toFixed(4);
+      diameterSelect.appendChild(opt);
+    });
+  }
+
+  zestawSelect.addEventListener("change", updateDiameters);
+  // ustaw listę przy pierwszym otwarciu
+  updateDiameters();
+</script>
+
+<!-- Biblioteka html5-qrcode -->
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+<script>
+let html5QrCode;
+
+function startScanner() {
+  const readerElem = document.getElementById("reader");
+  readerElem.style.display = "block";
+
+  if (!html5QrCode) {
+    html5QrCode = new Html5Qrcode("reader");
+  }
+
+  html5QrCode.start(
+    { facingMode: "environment" }, // tylna kamera
+    { fps: 10, qrbox: 250 },
+    (decodedText) => {
+      // wpisz wynik do pola formularza
+      document.getElementById("scannedCode").value = decodedText;
+      // zatrzymaj skaner po odczycie
+      html5QrCode.stop().then(() => {
+        readerElem.style.display = "none";
+      });
+    },
+    (errorMessage) => {
+      // błędy odczytu ignorujemy, bo kamera skanuje dalej
+    }
+  ).catch(err => {
+    console.error("Błąd uruchamiania skanera:", err);
+  });
+}
+</script>
+
+</body>
+</html>
+
